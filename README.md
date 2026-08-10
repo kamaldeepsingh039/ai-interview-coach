@@ -2,9 +2,20 @@
 
 Pick a role, get an interview question, type an answer, get short AI feedback.
 This is the "application workload" for the AWS Cloud/DevOps portfolio project —
-the point of this repo is not the app itself, it's everything you build *around* it.
+the point of this repo is not the app itself, it's everything you build *around* it. 
 
-## How it's built (know this cold)
+
+## How it's built 
+
+
+I used AI (Claude) to write the code for this app — I didn't write it line by line myself.
+
+What I did do: got it running on my own laptop, which took a full night because of
+problems that had nothing to do with the app code itself. My laptop had an old version
+of Python, and installing one package failed over and over because a system-level
+tool (OpenSSL) was missing — not a coding problem, a missing piece of my laptop. I had to install Homebrew, then the right tools through it, before it
+would even build. Right when I finally got the app running, calling the AI service failed. The exact model the code was pointed at had already been retired by google. I had to find the current model name and swap it in before the app would work. I set up git and GitHub, including fixing a login problem when I first tried to push.
+
 
 - **Frontend:** plain HTML/CSS/JS, no framework, no build step (`templates/index.html`,
   `static/style.css`, `static/script.js`). The browser calls the backend with `fetch()`.
