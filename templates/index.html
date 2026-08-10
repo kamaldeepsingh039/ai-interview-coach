@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Interview Coach</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">&#9729;</span>
+        <span class="brand-name">AI Interview Coach</span>
+      </div>
+      <div class="status" id="status" aria-live="polite">
+        <span class="status-label">READY</span>
+        <span class="status-dots">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </span>
+      </div>
+    </header>
+
+    <div class="role-row" id="roleRow" role="tablist" aria-label="Choose a role"></div>
+
+    <main class="card-stack">
+      <div class="card-shadow card-shadow-2"></div>
+      <div class="card-shadow card-shadow-1"></div>
+      <section class="card" id="questionCard">
+        <div class="card-label">
+          <span id="questionIndex">Q &middot; &mdash;</span>
+          <button id="newQuestionBtn" class="ghost-btn" type="button">New question &#8635;</button>
+        </div>
+        <p class="question-text" id="questionText">Pick a role above to get your first question.</p>
+      </section>
+    </main>
+
+    <section class="answer-block">
+      <label class="field-label" for="answerInput">YOUR ANSWER</label>
+      <textarea id="answerInput" rows="6" placeholder="Type your answer here&hellip;"></textarea>
+      <button id="submitBtn" class="primary-btn" type="button" disabled>Get feedback &rarr;</button>
+    </section>
+
+    <section class="feedback-block" id="feedbackBlock" hidden>
+      <div class="feedback-label">&#9614; COACH FEEDBACK</div>
+      <p class="feedback-text" id="feedbackText"></p>
+    </section>
+
+    <p class="error-text" id="errorText" hidden></p>
+  </div>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

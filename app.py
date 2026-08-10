@@ -1,0 +1,108 @@
+import os
+import random
+from flask import Flask, request, jsonify, render_template
+from dotenv import load_dotenv
+from google import genai
+
+load_dotenv()  # reads variables from a local .env file, if one exists
+
+app = Flask(__name__)
+
+# The Gemini client reads the GEMINI_API_KEY environment variable automatically.
+# We never put the key in this file — that's the whole point of using env vars.
+# Gemini's free tier needs no credit card on file, so there is no path to a
+# surprise bill here — worst case, requests get rate-limited, not charged.
+client = genai.Client()
+
+ROLES = {
+    "cloud-engineer": "Cloud Engineer",
+    "software-engineer": "Software Engineer",
+    "data-analyst": "Data Analyst",
+    "product-manager": "Product Manager",
+}
+
+QUESTION_BANK = {
+    "cloud-engineer": [
+        "Walk me through how you would design a highly available web app on AWS.",
+        "Tell me about a time a deployment failed. How did you find and fix it?",
+        "How do you decide between EC2, ECS, and Lambda for a new workload?",
+        "How would you explain your infrastructure's security setup to a non-technical manager?",
+    ],
+    "software-engineer": [
+        "Tell me about a time you had to debug a difficult issue in production.",
+        "How do you approach writing tests for a new feature?",
+        "Describe a project where you had to learn a new technology quickly.",
+    ],
+    "data-analyst": [
+        "Walk me through how you'd investigate a sudden drop in a key metric.",
+        "How do you decide which chart type fits a given dataset?",
+        "Tell me about a time your analysis changed a business decision.",
+    ],
+    "product-manager": [
+        "How do you prioritize a backlog when everything feels urgent?",
+        "Tell me about a time you had to say no to a stakeholder.",
+        "How do you measure whether a feature launch succeeded?",
+    ],
+}
+
+
+@app.route("/")
+def home():
+    return render_template("index.html")
+
+
+@app.route("/api/roles")
+def get_roles():
+    return jsonify(ROLES)
+
+
+@app.route("/api/question", methods=["POST"])
+def get_question():
+    data = request.get_json(silent=True) or {}
+    role = data.get("role")
+    if role not in QUESTION_BANK:
+        return jsonify({"error": "Unknown role"}), 400
+    question = random.choice(QUESTION_BANK[role])
+    return jsonify({"question": question})
+
+
+@app.route("/api/feedback", methods=["POST"])
+def get_feedback():
+    data = request.get_json(silent=True) or {}
+    role = data.get("role")
+    question = data.get("question")
+    answer = data.get("answer")
+
+    if not all([role, question, answer]):
+        return jsonify({"error": "Missing role, question, or answer"}), 400
+
+    role_label = ROLES.get(role, role)
+
+    prompt = (
+        f"You are a supportive interview coach for a {role_label} role.\n\n"
+        f"Interview question: {question}\n\n"
+        f"Candidate's answer: {answer}\n\n"
+        "Give short, specific feedback in 3-5 sentences: one thing they did well, "
+        "one thing to improve, and a concrete tip for structuring the answer better "
+        "(e.g. the STAR method)."
+    )
+
+    try:
+        response = client.models.generate_content(
+            # Free-tier model with a generous daily quota — good for a learning project.
+            # "gemini-3.5-flash" gives deeper feedback but only ~50 free requests/day.
+            model="gemini-3.5-flash",
+            contents=prompt,
+        )
+        feedback = response.text
+    except Exception as exc:
+        return jsonify({"error": f"Could not reach the AI service: {exc}"}), 500
+
+    return jsonify({"feedback": feedback})
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    host = os.environ.get("HOST", "127.0.0.1")
+    debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
+    app.run(host="0.0.0.0", port=port, debug=debug)
