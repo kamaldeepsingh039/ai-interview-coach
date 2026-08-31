@@ -1,5 +1,6 @@
 import os
 import random
+import psycopg2
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 from google import genai
@@ -13,6 +14,18 @@ app = Flask(__name__)
 # Gemini's free tier needs no credit card on file, so there is no path to a
 # surprise bill here — worst case, requests get rate-limited, not charged.
 client = genai.Client()
+
+
+def get_db_connection():
+    return psycopg2.connect(
+        host=os.environ.get("DB_HOST"),
+        port=os.environ.get("DB_PORT"),
+        dbname=os.environ.get("DB_NAME"),
+        user=os.environ.get("DB_USER"),
+        password=os.environ.get("DB_PASSWORD"),
+        sslmode="require",
+    )
+
 
 ROLES = {
     "cloud-engineer": "Cloud Engineer",
@@ -95,6 +108,16 @@ def get_feedback():
             contents=prompt,
         )
         feedback = response.text
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO sessions (role, question, answer, feedback) VALUES (%s, %s, %s, %s)",
+            (role, question, answer, feedback),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
     except Exception as exc:
         return jsonify({"error": f"Could not reach the AI service: {exc}"}), 500
 
