@@ -53,7 +53,7 @@ would even build. Right when I finally got the app running, calling the AI servi
    ```
 5. Open http://localhost:5000 in your browser.
 
-## Run it with Docker (once you're on that stage)
+## Run it with Docker (once on that stage)
 
 ```
 docker build -t ai-interview-coach .
