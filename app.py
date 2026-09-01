@@ -1,6 +1,7 @@
 import os
 import random
 import psycopg2
+import requests
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 from google import genai
@@ -34,29 +35,37 @@ ROLES = {
     "product-manager": "Product Manager",
 }
 
-QUESTION_BANK = {
-    "cloud-engineer": [
-        "Walk me through how you would design a highly available web app on AWS.",
-        "Tell me about a time a deployment failed. How did you find and fix it?",
-        "How do you decide between EC2, ECS, and Lambda for a new workload?",
-        "How would you explain your infrastructure's security setup to a non-technical manager?",
-    ],
-    "software-engineer": [
-        "Tell me about a time you had to debug a difficult issue in production.",
-        "How do you approach writing tests for a new feature?",
-        "Describe a project where you had to learn a new technology quickly.",
-    ],
-    "data-analyst": [
-        "Walk me through how you'd investigate a sudden drop in a key metric.",
-        "How do you decide which chart type fits a given dataset?",
-        "Tell me about a time your analysis changed a business decision.",
-    ],
-    "product-manager": [
-        "How do you prioritize a backlog when everything feels urgent?",
-        "Tell me about a time you had to say no to a stakeholder.",
-        "How do you measure whether a feature launch succeeded?",
-    ],
-}
+# Question bank now lives in S3, served through CloudFront, instead of being
+# hardcoded here. This fetch runs once, when Flask starts up.
+QUESTIONS_URL = "https://d1927xzamfh4ps.cloudfront.net/data/questions.json"
+
+
+def load_question_bank():
+    try:
+        response = requests.get(QUESTIONS_URL, timeout=5)
+        response.raise_for_status()
+        return response.json()
+    except Exception as exc:
+        print(f"Could not load question bank from CloudFront: {exc}")
+        # Small emergency fallback so the app still runs if CloudFront is
+        # ever unreachable, instead of crashing on startup.
+        return {
+            "cloud-engineer": [
+                "Walk me through how you would design a highly available web app on AWS."
+            ],
+            "software-engineer": [
+                "Tell me about a time you had to debug a difficult issue in production."
+            ],
+            "data-analyst": [
+                "Walk me through how you'd investigate a sudden drop in a key metric."
+            ],
+            "product-manager": [
+                "How do you prioritize a backlog when everything feels urgent?"
+            ],
+        }
+
+
+QUESTION_BANK = load_question_bank()
 
 
 @app.route("/")
