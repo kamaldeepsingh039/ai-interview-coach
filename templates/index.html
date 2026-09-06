@@ -1,56 +1,79 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Interview Coach</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Interview Coach</title>
+  <!-- Static assets served from S3 through CloudFront, not by Flask/Nginx.
+       "v2" is a versioned path so this can go live without colliding with
+       whatever's already sitting in the S3 bucket. -->
+  <link rel="stylesheet" href="https://d1927xzamfh4ps.cloudfront.net/static/v2/style.css" />
 </head>
 <body>
-  <div class="app">
-    <header class="app-header">
+  <div class="page">
+    <header class="header">
       <div class="brand">
-        <span class="brand-mark">&#9729;</span>
+        <span class="brand-mark">IC</span>
         <span class="brand-name">AI Interview Coach</span>
       </div>
-      <div class="status" id="status" aria-live="polite">
-        <span class="status-label">READY</span>
-        <span class="status-dots">
-          <span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        </span>
-      </div>
+      <p class="tagline">Practice real questions. Get real feedback.</p>
     </header>
 
-    <div class="role-row" id="roleRow" role="tablist" aria-label="Choose a role"></div>
-
-    <main class="card-stack">
-      <div class="card-shadow card-shadow-2"></div>
-      <div class="card-shadow card-shadow-1"></div>
-      <section class="card" id="questionCard">
-        <div class="card-label">
-          <span id="questionIndex">Q &middot; &mdash;</span>
-          <button id="newQuestionBtn" class="ghost-btn" type="button">New question &#8635;</button>
-        </div>
-        <p class="question-text" id="questionText">Pick a role above to get your first question.</p>
+    <main class="card">
+      <section class="step" id="role-step">
+        <label class="step-label" for="role-select">1. Pick a role</label>
+        <select id="role-select" class="role-select" disabled>
+          <option value="">Loading roles…</option>
+        </select>
+        <button id="get-question-btn" class="btn btn-primary" disabled>
+          Get a question
+        </button>
       </section>
+
+      <section class="step hidden" id="question-step">
+        <label class="step-label">2. Your question</label>
+        <p id="question-text" class="question-text"></p>
+
+        <label class="step-label" for="answer-input">3. Your answer</label>
+        <textarea
+          id="answer-input"
+          class="answer-input"
+          rows="6"
+          placeholder="Type your answer here — treat it like you're actually in the interview."
+        ></textarea>
+
+        <div class="actions">
+          <button id="submit-answer-btn" class="btn btn-primary">
+            Submit answer
+          </button>
+          <button id="new-question-btn" class="btn btn-ghost">
+            New question
+          </button>
+        </div>
+      </section>
+
+      <section class="step hidden" id="feedback-step">
+        <label class="step-label">Feedback</label>
+        <div id="feedback-loading" class="feedback-loading hidden">
+          <span class="spinner"></span> Thinking it over…
+        </div>
+        <div id="feedback-text" class="feedback-text"></div>
+        <div class="actions">
+          <button id="try-again-btn" class="btn btn-ghost">
+            Try another question
+          </button>
+        </div>
+      </section>
+
+      <p id="error-banner" class="error-banner hidden"></p>
     </main>
 
-    <section class="answer-block">
-      <label class="field-label" for="answerInput">YOUR ANSWER</label>
-      <textarea id="answerInput" rows="6" placeholder="Type your answer here&hellip;"></textarea>
-      <button id="submitBtn" class="primary-btn" type="button" disabled>Get feedback &rarr;</button>
-    </section>
-
-    <section class="feedback-block" id="feedbackBlock" hidden>
-      <div class="feedback-label">&#9614; COACH FEEDBACK</div>
-      <p class="feedback-text" id="feedbackText"></p>
-    </section>
-
-    <p class="error-text" id="errorText" hidden></p>
+    <footer class="footer">
+      Built by Kamaldeep Singh &middot; Flask + Gemini, deployed on a
+      hand-built three-tier AWS architecture.
+    </footer>
   </div>
 
-  <script src="{{ url_for('static', filename='script.js') }}"></script>
+  <script src="https://d1927xzamfh4ps.cloudfront.net/static/v2/script.js" defer></script>
 </body>
 </html>

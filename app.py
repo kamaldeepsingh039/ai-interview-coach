@@ -1,7 +1,10 @@
 import os
+import json
 import random
 import psycopg2
 import requests
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError, EndpointConnectionError
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 from google import genai
@@ -10,10 +13,41 @@ load_dotenv()  # reads variables from a local .env file, if one exists
 
 app = Flask(__name__)
 
+# ---------------------------------------------------------------------------
+# Secrets Manager
+# ---------------------------------------------------------------------------
+# On the app-tier EC2 instance, this pulls the real Gemini API key and DB
+# credentials from Secrets Manager and drops them into the environment,
+# using whatever IAM role is attached to the instance -- no AWS access keys
+# ever live in this file or in .env.
+#
+# On a laptop with no IAM role attached, the AWS call fails fast and this
+# silently falls back to whatever's already in .env, same fallback pattern
+# already used below in load_question_bank() for CloudFront.
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+
+
+def load_secret_into_env(secret_name):
+    try:
+        client = boto3.client("secretsmanager", region_name=AWS_REGION)
+        response = client.get_secret_value(SecretId=secret_name)
+        secret_values = json.loads(response["SecretString"])
+        for key, value in secret_values.items():
+            os.environ[key] = value
+        print(f"Loaded secret '{secret_name}' from Secrets Manager.")
+    except (ClientError, NoCredentialsError, EndpointConnectionError) as exc:
+        print(f"Could not load '{secret_name}' from Secrets Manager, falling back to .env: {exc}")
+
+
+# Secret names created in AWS Secrets Manager -- see SECRETS_MANAGER_SETUP.md
+# for the exact key/value pairs each one needs to contain.
+load_secret_into_env("icoach/gemini-api-key")
+load_secret_into_env("icoach/db-credentials")
+
 # The Gemini client reads the GEMINI_API_KEY environment variable automatically.
-# We never put the key in this file — that's the whole point of using env vars.
+# We never put the key in this file -- that's the whole point of using env vars.
 # Gemini's free tier needs no credit card on file, so there is no path to a
-# surprise bill here — worst case, requests get rate-limited, not charged.
+# surprise bill here -- worst case, requests get rate-limited, not charged.
 client = genai.Client()
 
 
@@ -35,7 +69,7 @@ ROLES = {
     "product-manager": "Product Manager",
 }
 
-# Question bank now lives in S3, served through CloudFront, instead of being
+# Question bank lives in S3, served through CloudFront, instead of being
 # hardcoded here. This fetch runs once, when Flask starts up.
 QUESTIONS_URL = "https://d1927xzamfh4ps.cloudfront.net/data/questions.json"
 
@@ -111,7 +145,7 @@ def get_feedback():
 
     try:
         response = client.models.generate_content(
-            # Free-tier model with a generous daily quota — good for a learning project.
+            # Free-tier model with a generous daily quota -- good for a learning project.
             # "gemini-3.5-flash" gives deeper feedback but only ~50 free requests/day.
             model="gemini-3.5-flash",
             contents=prompt,
