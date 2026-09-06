@@ -1,25 +1,12 @@
 # AI Interview Coach
 
-### Project 1 — Three-Tier AWS Deployment
+## Phase 1.1 - High-Availability App-Tier Migration
 
-**Project started August 2026 | Manual AWS deployment completed September 2026 | us-east-1**
+**Project started August 2026 | Phase 1.1 completed September 2026 | us-east-1**
 
-AI Interview Coach is a Flask-based application that generates cloud and DevOps interview questions, accepts user responses, provides feedback, and stores completed interview sessions in PostgreSQL.
+AI Interview Coach is a Flask-based application that lets users choose from **Cloud Engineer, Software Engineer, Product Manager, and Data Analyst** interview tracks, receive randomized questions, submit answers, get AI-generated feedback through Gemini, and store completed interview sessions in PostgreSQL.
 
-This project is being developed in stages so I can understand the full lifecycle of a cloud application — from a local prototype to manually deployed AWS infrastructure, Infrastructure as Code, containers, CI/CD, and eventually Kubernetes.
-
----
-
-## Live Deployment
-
-**Live App:**  
-http://icoach-alb-1227578735.us-east-1.elb.amazonaws.com/
-
-The application is currently deployed on AWS behind an internet-facing Application Load Balancer.
-
-HTTPS and a custom domain are planned for a later iteration.
-
-![AI Interview Coach running through AWS ALB](docs/screenshots/01-live-app-alb.png)
+This project is being developed in stages so I can understand the full lifecycle of a cloud application - from a local prototype to manually deployed AWS infrastructure, Infrastructure as Code, containers, CI/CD, and eventually Kubernetes.
 
 ---
 
@@ -31,22 +18,22 @@ After validating the application locally, I moved the same application to AWS an
 
 The goal of building manually first was to understand what each AWS component does, how the components communicate, and what happens when part of the architecture fails before automating the infrastructure with Terraform.
 
-### Phase 0 — Local Prototype
+### Phase 0 - Local Prototype
 
 Built and tested the application locally to validate:
 
 - Flask application workflow
 - Interview question generation
 - User response handling
-- Feedback generation
+- Gemini feedback generation
 - PostgreSQL integration
 - Session persistence
 
-### Phase 1 — Manual AWS Deployment ✅
+### Phase 1 - Manual AWS Deployment - Complete
 
-The application was then deployed manually on AWS using a custom three-tier architecture.
+The application was manually deployed on AWS using a custom multi-tier architecture.
 
-This phase focuses on:
+This phase focused on:
 
 - Networking
 - Load balancing
@@ -60,167 +47,267 @@ This phase focuses on:
 - Failure testing
 - Recovery testing
 
+Phase 1 also exposed an important availability limitation: the application tier still depended on one EC2 instance.
+
+### Phase 1.1 - High-Availability App-Tier Migration - Complete
+
+Phase 1.1 improved the existing infrastructure rather than starting over.
+
+The main goals were to:
+
+- remove application secrets from the EC2 filesystem
+- use AWS Secrets Manager
+- use IAM-based runtime secret access
+- remove the single-instance application-tier dependency
+- introduce an internal Application Load Balancer
+- introduce an application Auto Scaling Group
+- run application instances across two Availability Zones
+- update the web tier to route through the internal ALB
+- refresh the web Auto Scaling Group
+- deliver static assets through CloudFront
+- harden security-group communication
+- test automatic application-instance replacement
+- perform the final routing migration with zero observed downtime
+
+During preparation for the migration, a security-group configuration mistake also caused a temporary application outage. The failure was detected, troubleshot, corrected, and incorporated into the deployment process.
+
 ### Next Phases
 
-- **Phase 2 — Terraform / Infrastructure as Code**
-- **Phase 3 — Docker**
-- **Phase 4 — CI/CD**
-- **Phase 5 — Kubernetes / Amazon EKS**
+- Phase 2 - Terraform / Infrastructure as Code
+- Phase 3 - Docker
+- Phase 4 - CI/CD
+- Phase 5 - Kubernetes / Amazon EKS
 
-The same application will continue through each phase so the repository shows the evolution of one system rather than a collection of unrelated demos.
+The same application and GitHub repository continue through each phase, showing the evolution of one system rather than a collection of unrelated demos.
 
 ---
 
 # Architecture
 
-![AI Interview Coach AWS Architecture](docs/architecture/icoach-aws-architecture.png)
+![AI Interview Coach Phase 1.1 AWS Architecture](docs/architecture/ai-interview-coach-aws-architecture-phase-1-1.png)
 
-### Primary Request Flow
+## Primary Request Flow
 
 ```text
 Internet User
-      ↓
-Application Load Balancer
-      ↓
-Web Tier — Nginx / Auto Scaling Group
-      ↓
-App Tier — Flask / systemd
-      ↓
+      |
+      v
+Internet-Facing Application Load Balancer
+      |
+      v
+Web Tier - Nginx / Auto Scaling Group
+      |
+      v
+Internal Application Load Balancer
+      |
+      v
+App Tier - Flask / Auto Scaling Group
+      |
+      v
 Amazon RDS PostgreSQL
 ```
 
-### Question Bank Flow
+## Question Bank Flow
 
 ```text
 Private App EC2
-      ↓
+      |
+      v
 NAT Gateway
-      ↓
+      |
+      v
 Amazon CloudFront
-      ↓
+      |
+      v
 Private Amazon S3 Bucket
-      ↓
+      |
+      v
 data/questions.json
 ```
 
-### Monitoring Flow
+## Static Asset Flow
+
+```text
+Browser
+      |
+      v
+Amazon CloudFront
+      |
+      v
+Private Amazon S3 Bucket
+      |
+      v
+static/v2/style.css
+static/v2/script.js
+```
+
+## Secrets Flow
+
+```text
+App EC2
+      |
+      v
+IAM Instance Role
+      |
+      v
+AWS Secrets Manager
+      |
+      v
+Gemini API Key
+Database Credentials
+```
+
+## Monitoring Flow
 
 ```text
 AWS Resource / Metric
-      ↓
+      |
+      v
 Amazon CloudWatch
-      ↓
+      |
+      v
 CloudWatch Alarm
-      ↓
+      |
+      v
 Amazon SNS
-      ↓
+      |
+      v
 Email Notification
 ```
 
 ---
 
-## Architecture at a Glance
+# Architecture at a Glance
 
 | Layer | Implementation |
 |---|---|
 | Networking | Custom VPC with 6 subnets across 2 Availability Zones |
-| Load Balancing | Internet-facing Application Load Balancer |
+| Public Load Balancing | Internet-facing Application Load Balancer |
 | Web Tier | Nginx EC2 instances in an Auto Scaling Group |
-| App Tier | Private Flask EC2 instance managed by systemd |
+| App Load Balancing | Internal Application Load Balancer |
+| App Tier | Flask EC2 instances in an Auto Scaling Group |
 | Database | Private Amazon RDS PostgreSQL |
+| Secrets | AWS Secrets Manager with EC2 IAM instance role |
 | Content Delivery | Private S3 bucket behind CloudFront using OAC |
 | Monitoring | CloudWatch alarms with SNS email notifications |
 | Security | Security-group-to-security-group communication between tiers |
-| Availability | Web tier spans 2 AZs; app and database remain single-instance / Single-AZ in this version |
+| Availability | Web and application tiers span 2 AZs; database remains Single-AZ |
 
 ---
 
 # Networking
 
-The infrastructure runs inside a custom VPC.
+The infrastructure runs inside a custom VPC in `us-east-1`.
 
-**VPC CIDR:** `10.1.0.0/16`  
-**Region:** `us-east-1`
+The VPC contains six subnets across two Availability Zones:
 
-| Subnet | CIDR | Purpose |
-|---|---|---|
-| Public 1a | `10.1.0.0/24` | ALB, web tier, NAT Gateway |
-| Public 1b | `10.1.1.0/24` | ALB, web tier |
-| App 1a | `10.1.10.0/24` | Flask application tier |
-| App 1b | `10.1.11.0/24` | Reserved for future Multi-AZ app deployment |
-| Data 1a | `10.1.20.0/24` | RDS |
-| Data 1b | `10.1.21.0/24` | RDS subnet group / future Multi-AZ use |
+```text
+Public Subnet 1a   10.1.0.0/24
+Public Subnet 1b   10.1.1.0/24
 
-### Routing
+App Subnet 1a      10.1.10.0/24
+App Subnet 1b      10.1.11.0/24
 
-- Public subnets route internet-bound traffic through the Internet Gateway.
-- Private application subnets use a NAT Gateway for required outbound access.
-- Database subnets have no internet route.
+Data Subnet 1a     10.1.20.0/24
+Data Subnet 1b     10.1.21.0/24
+```
 
-![AWS VPC Resource Map](docs/screenshots/02-vpc-resource-map.png)
+The public subnets contain the internet-facing ALB and web tier.
+
+The private application subnets contain the internal application ALB and application EC2 instances.
+
+The private data subnets are used by Amazon RDS.
+
+Private application instances use the NAT Gateway when outbound internet access is required.
 
 ---
 
-# Security Design
+# Web Tier - ALB and Auto Scaling
 
-Communication between the application tiers is restricted using security-group references rather than broadly exposing application ports.
+The web tier remains behind the internet-facing Application Load Balancer.
 
 ```text
 Internet
-   ↓ HTTP 80
-icoach-alb-sg
-   ↓ HTTP 80
-icoach-web-sg
-   ↓ TCP 5000
-icoach-app-sg
-   ↓ PostgreSQL 5432
-icoach-db-sg
+   |
+   v
+Public ALB
+   |
+   v
+Web Target Group
+   |
+   v
+Nginx EC2 Instances
 ```
 
-### Traffic Rules
-
-- Internet → `icoach-alb-sg` : `80`
-- `icoach-alb-sg` → `icoach-web-sg` : `80`
-- `icoach-web-sg` → `icoach-app-sg` : `5000`
-- `icoach-app-sg` → `icoach-db-sg` : `5432`
-
-### Administrative Access
-
-During the manual build, the web tier was also used as an administrative jump point.
+The web instances are managed by:
 
 ```text
-Admin IP
-   ↓ SSH 22
-Web Tier
-   ↓ SSH 22
-App Tier
+icoach-web-asg
 ```
 
-The deployed application itself does **not** depend on an active SSH session.
+and span both public subnets.
 
-CloudFront and S3 are outside this security-group chain. Access to the private S3 bucket is controlled using CloudFront Origin Access Control and the S3 bucket policy.
+Before Phase 1.1, Nginx forwarded application traffic directly to one private application EC2 address.
+
+Phase 1.1 changed the Nginx upstream so traffic goes to the new internal application ALB instead.
+
+The new web configuration was captured in:
+
+```text
+icoach-web-ami-v2
+```
+
+The web launch template was updated and an instance refresh was performed.
+
+![Web instance refresh during migration](docs/screenshots/phase-1-1/06-web-instance-refresh-live-cutover.png)
+
+The refresh used a launch-before-terminate approach so replacement capacity could become healthy before existing instances were removed.
+
+![Successful web instance refresh](docs/screenshots/phase-1-1/07-web-instance-refresh-successful.png)
 
 ---
 
-# Web Tier — ALB and Auto Scaling
+# Application Tier - Internal ALB and Auto Scaling
 
-The web tier uses Nginx EC2 instances behind an internet-facing Application Load Balancer.
+Phase 1 used one private application EC2 instance.
 
-### Application Load Balancer
+That created a single point of failure.
 
-- Internet-facing
-- Spans both public subnets
-- HTTP listener on port `80`
-- Forwards requests to `icoach-web-tg`
-- Health check path: `/`
+Phase 1.1 replaced that design with an internal ALB and an application Auto Scaling Group.
 
-Both web targets were validated as healthy across two Availability Zones.
+```text
+Web Tier
+   |
+   v
+Internal Application Load Balancer
+   |
+   v
+icoach-app-tg
+   |
+   +-------------------+
+   |                   |
+   v                   v
+App EC2             App EC2
+AZ 1a               AZ 1b
+```
 
-![ALB Healthy Targets](docs/screenshots/03-alb-healthy-targets.png)
+The internal load balancer is:
 
-### Auto Scaling Group
+```text
+icoach-app-alb
+```
 
-The web instances are managed by `icoach-web-asg`.
+It spans both private application subnets.
+
+![Internal app ALB across app subnets](docs/screenshots/phase-1-1/02-internal-app-alb-multi-az.png)
+
+The application Auto Scaling Group is:
+
+```text
+icoach-app-asg
+```
+
+Configuration:
 
 ```text
 Desired capacity: 2
@@ -228,487 +315,535 @@ Minimum capacity: 2
 Maximum capacity: 4
 ```
 
-The web tier uses:
+The launch template uses:
 
-- Amazon Linux 2023
-- Nginx reverse proxy
-- Two Availability Zones
-- Automatic target registration and deregistration
-- Target tracking based on average CPU utilization
+```text
+icoach-app-launch-template
+```
 
-![EC2 Auto Scaling Group](docs/screenshots/04-auto-scaling-groups.png)
+with:
+
+```text
+icoach-app-ami-v1
+t3.micro
+icoach-app-secrets-role
+```
+
+![App ASG capacity and launch template](docs/screenshots/phase-1-1/03-app-asg-capacity-and-launch-template.png)
+
+Both application targets were validated healthy behind the internal ALB.
+
+![App target group 2 of 2 healthy](docs/screenshots/phase-1-1/05-app-target-group-2-of-2-healthy.png)
+
+After the new application path was validated, the original standalone `icoach-app-01` instance was decommissioned.
 
 ---
 
-# Application Tier — Flask + systemd
+# Secrets Manager and IAM
 
-The Flask application runs on a private EC2 instance with no public IP address.
+Phase 1 stored application credentials locally in a `.env` file.
 
-Nginx on the web tier forwards application requests to Flask on port `5000`.
+Phase 1.1 moved those values into AWS Secrets Manager.
 
-Originally, the application was started manually:
-
-```bash
-python3 app.py
-```
-
-This created an operational problem because the application process depended on the shell session.
-
-I converted the application into a `systemd` service so that it could run independently of SSH.
-
-### Service Configuration
+The application uses:
 
 ```text
-Service: icoach-app
-User: ec2-user
-Working directory: /home/ec2-user/ai-interview-coach
-Restart policy: Restart=always
-Boot behavior: enabled
+icoach/gemini-api-key
 ```
 
-This provides:
+and:
 
-- Automatic startup during boot
-- Automatic process restart
-- Independence from SSH sessions
-- Consistent service management
+```text
+icoach/db-credentials
+```
 
-The application was verified with no active SSH session while requests continued returning HTTP `200`.
+The database secret contains:
 
-![Flask application running through systemd](docs/screenshots/05-systemd-app-running.png)
+```text
+DB_HOST
+DB_PORT
+DB_NAME
+DB_USER
+DB_PASSWORD
+```
+
+Application instances use:
+
+```text
+IAM Policy: icoach-secrets-read-policy
+IAM Role: icoach-app-secrets-role
+Trusted Service: EC2
+```
+
+The IAM policy is scoped to the required secrets.
+
+`app.py` retrieves the values at startup using `boto3` and the IAM role attached to the EC2 instance.
+
+A `.env` fallback remains for local development only.
+
+The real `.env` file is ignored by Git and is not stored in the repository.
+
+Before changing the application traffic path, the new configuration was validated using a temporary instance.
+
+Validation included:
+
+- IAM-based secret retrieval
+- application startup
+- Gemini API request
+- PostgreSQL connectivity
+- successful session persistence
+
+![Secrets Manager IAM validation](docs/screenshots/phase-1-1/04-secrets-manager-iam-validation.png)
 
 ---
 
-# Database — Amazon RDS PostgreSQL
+# Application-Level Changes
 
-The application stores completed interview sessions in a private Amazon RDS PostgreSQL database.
+Phase 1.1 also required changes to the Flask application so it could use the new AWS infrastructure.
 
-### Configuration
+## Secrets Loaded at Startup
 
-```text
-Engine: PostgreSQL
-Instance class: db.t4g.micro
-Storage: 20 GB
-Public access: Disabled
-Encryption: Enabled
+The application retrieves the required secrets from Secrets Manager during startup.
+
+```python
+def load_secret_into_env(secret_name):
+    try:
+        client = boto3.client("secretsmanager", region_name=AWS_REGION)
+        response = client.get_secret_value(SecretId=secret_name)
+        secret_values = json.loads(response["SecretString"])
+
+        for key, value in secret_values.items():
+            os.environ[key] = value
+
+    except (ClientError, NoCredentialsError, EndpointConnectionError) as exc:
+        print(
+            f"Could not load '{secret_name}' from Secrets Manager, "
+            f"falling back to .env: {exc}"
+        )
 ```
 
-The database accepts PostgreSQL traffic only from the application-tier security group on port `5432`.
+On AWS, the IAM instance role provides permission to retrieve the secrets.
 
-The `sessions` table stores:
+For local development, the application can fall back to the local `.env` configuration.
 
-```text
-id
-role
-question
-answer
-feedback
-created_at
-```
+## Question Bank Through CloudFront
 
-Multiple completed interview sessions were successfully persisted to PostgreSQL.
-
-![Persisted interview sessions in PostgreSQL](docs/screenshots/06-rds-persisted-interview-sessions.png)
-
-The database remains **Single-AZ** in this learning environment.
-
-I originally planned to use a Multi-AZ RDS deployment, but the additional cost was not justified for this project and did not fit the cost constraints of the environment I was using.
-
-I therefore kept the database Single-AZ as a deliberate cost-optimization decision while still using a DB subnet group that spans both Availability Zones.
-
-This keeps a clear path open for a future Multi-AZ deployment when the workload or availability requirements justify the additional cost.
-
----
-
-# S3 + CloudFront
-
-The interview question bank was moved out of `app.py` and into Amazon S3.
-
-The bucket contains:
+The main question bank is stored in:
 
 ```text
-/data/questions.json
-/static/style.css
-/static/script.js
-```
-
-The S3 bucket is private:
-
-- Block Public Access enabled
-- ACLs disabled
-- Server-side encryption enabled
-- CloudFront accesses S3 using Origin Access Control
-
-The Flask application does **not** access S3 directly.
-
-Instead, it retrieves the question bank through CloudFront:
-
-```text
-Private App EC2
-      ↓
-NAT Gateway
-      ↓
-CloudFront HTTPS Endpoint
-      ↓
-Private S3 Origin
-      ↓
 data/questions.json
 ```
 
-A small fallback question set remains inside the application so the service can still start if the external question-bank request fails.
+inside the private S3 bucket.
+
+The application retrieves the file through CloudFront:
+
+```python
+QUESTIONS_URL = "https://d1927xzamfh4ps.cloudfront.net/data/questions.json"
+```
+
+A small built-in fallback remains available if the remote question-bank request fails.
+
+## Static Assets Through CloudFront
+
+The application templates were updated to retrieve CSS and JavaScript from CloudFront.
+
+```html
+<link
+  rel="stylesheet"
+  href="https://d1927xzamfh4ps.cloudfront.net/static/v2/style.css"
+/>
+
+<script
+  src="https://d1927xzamfh4ps.cloudfront.net/static/v2/script.js"
+  defer>
+</script>
+```
+
+The `v2` path separates the newer assets from the earlier static-file location.
+
+## PostgreSQL Persistence
+
+After Gemini returns feedback, the completed session is written to PostgreSQL.
+
+```python
+cur.execute(
+    "INSERT INTO sessions "
+    "(role, question, answer, feedback) "
+    "VALUES (%s, %s, %s, %s)",
+    (role, question, answer, feedback),
+)
+```
+
+Database connection values come from the Secrets Manager database secret when the application runs on AWS.
 
 ---
 
-# Monitoring & Alerting — CloudWatch + SNS
+# Final Application-Tier Migration
 
-Monitoring was added using Amazon CloudWatch and Amazon SNS.
+Before Phase 1.1, Nginx forwarded application traffic directly to the original EC2 private address.
 
-An SNS topic named:
-
-```text
-icoach-alerts
+```nginx
+proxy_pass http://10.1.10.76:5000;
 ```
 
-was connected to a confirmed email subscription.
+The new configuration forwards requests to the internal application ALB.
 
-### CloudWatch Alarms
+```nginx
+proxy_pass http://internal-icoach-app-alb-1507651515.us-east-1.elb.amazonaws.com;
+```
 
-| Alarm | Metric | Threshold |
-|---|---|---|
-| `icoach-web-unhealthy-1a` | UnHealthyHostCount — us-east-1a | ≥ 1 for 2/2 datapoints at 1-minute intervals |
-| `icoach-web-unhealthy-1b` | UnHealthyHostCount — us-east-1b | ≥ 1 for 2/2 datapoints at 1-minute intervals |
-| `icoach-db-cpu-high` | RDS CPUUtilization | > 70% for 2/2 datapoints at 1-minute intervals |
-
-Both **ALARM** and **OK** state transitions publish notifications through SNS.
+The change was validated using:
 
 ```text
-AWS Resource / Metric
-      ↓
-Amazon CloudWatch
-      ↓
-CloudWatch Alarm
-      ↓
-Amazon SNS
-      ↓
-Email Notification
+nginx -t
 ```
+
+followed by:
+
+```text
+systemctl reload nginx
+```
+
+and:
+
+```text
+curl -I http://localhost
+```
+
+The web tier returned:
+
+```text
+200 OK
+```
+
+The application was then validated through the public-facing ALB.
+
+![Application deployment validation](docs/screenshots/phase-1-1/01-live-app-through-public-alb.png)
+
+The final routing cutover completed with **zero observed downtime**.
+
+This refers specifically to what was observed during the completed migration and does not mean the application is currently operating as an always-on public service.
 
 ---
 
-# Failure and Recovery Test
+# Security Groups
 
-Monitoring was not left untested.
+Phase 1.1 introduced a dedicated security group for the internal application ALB.
 
-I deliberately stopped the Flask application service:
+The final traffic path became:
 
-```bash
-sudo systemctl stop icoach-app
+```text
+Internet
+   |
+   v
+icoach-alb-sg
+HTTP 80
+   |
+   v
+icoach-web-sg
+HTTP 80
+   |
+   v
+icoach-app-alb-sg
+TCP 5000
+   |
+   v
+icoach-app-sg
+PostgreSQL 5432
+   |
+   v
+icoach-db-sg
+```
+
+The internal ALB and application EC2 instances therefore have separate security responsibilities.
+
+The final application security group permits the required application path from the internal ALB and administrative SSH access from the web-tier security group.
+
+![Final app security group rules](docs/screenshots/phase-1-1/09-app-security-group-final-rules.png)
+
+---
+
+# Deployment Incident and Troubleshooting
+
+During preparation for the application-tier migration, an existing security-group rule was accidentally overwritten instead of preserving the original path while the new path was being added.
+
+The missing rule prevented the web tier from reaching the original application instance on port `5000`.
+
+CloudWatch detected the resulting unhealthy targets and SNS generated an ALARM notification.
+
+![CloudWatch SNS incident alarm](docs/screenshots/phase-1-1/13-cloudwatch-sns-incident-alarm.png)
+
+The problem was isolated layer by layer.
+
+First, the application service was checked:
+
+```text
+systemctl status icoach-app
+```
+
+The service was running.
+
+Nginx was then tested locally:
+
+```text
+curl -I http://localhost
 ```
 
 The result was:
 
-- Web-tier health checks failed
-- Both Availability Zone health alarms entered `ALARM`
-- CloudWatch detected the unhealthy state
-- SNS delivered real failure notifications
-
-![CloudWatch alarms during application failure](docs/screenshots/07-cloudwatch-app-failures.png)
-
-SNS then delivered the alarm notification by email.
-
-![SNS alarm email](docs/screenshots/09-sns-alarm-email.png)
-
-The application was restored with:
-
-```bash
-sudo systemctl start icoach-app
+```text
+504 Gateway Timeout
 ```
 
-After recovery:
-
-- Application health returned
-- ALB target health recovered
-- CloudWatch alarms returned to `OK`
-- SNS delivered recovery notifications
-
-![CloudWatch alarms after application recovery](docs/screenshots/08-cloudwatch-recoveries.png)
-
-![SNS recovery email](docs/screenshots/10-sns-recovery-email.png)
-
-### Failure / Recovery Flow
+Direct connectivity from the web tier to the application was then tested:
 
 ```text
-Healthy
-   ↓
-Intentional application failure
-   ↓
-Health checks fail
-   ↓
-CloudWatch enters ALARM
-   ↓
-SNS sends alert
-   ↓
-Service restored
-   ↓
-Health checks recover
-   ↓
-CloudWatch returns to OK
-   ↓
-SNS sends recovery notification
+curl -v http://<app-private-ip>:5000
+```
+
+The request timed out.
+
+The security-group rules were inspected and the missing web-to-app inbound rule was identified.
+
+After restoring the rule, recovery was validated through:
+
+- direct connectivity
+- target-group health
+- application access
+- CloudWatch alarm recovery
+- SNS recovery notification
+
+The main lesson from the incident was:
+
+> **Add the new path first, validate it end to end, then remove the old path.**
+
+That approach was used during the remaining migration work.
+
+---
+
+# Failure and Recovery Testing
+
+After the application Auto Scaling Group was established, one ASG-managed application instance was deliberately terminated.
+
+The expected sequence was:
+
+```text
+App instance terminated
+      |
+      v
+Healthy target count drops
+      |
+      v
+ASG detects missing capacity
+      |
+      v
+Replacement EC2 launches
+      |
+      v
+Health checks pass
+      |
+      v
+Target group returns to healthy capacity
+```
+
+The replacement instance was launched automatically.
+
+No manual EC2 replacement was required.
+
+![App ASG self-healing replacement](docs/screenshots/phase-1-1/08-app-asg-self-healing-replacement.png)
+
+This validated that the application tier no longer depended on one permanent EC2 instance.
+
+The security-group incident and the Auto Scaling test were separate events:
+
+```text
+Security-group outage
+= accidental deployment failure
+
+ASG instance termination
+= deliberate resilience test
 ```
 
 ---
 
-# What the Failure Test Revealed
+# Database - Amazon RDS PostgreSQL
 
-The web tier spans two Availability Zones.
+The database remains a private Amazon RDS PostgreSQL deployment.
 
-However, both web-tier instances currently depend on the **same single application-tier EC2 instance**.
+It is not publicly accessible.
 
-When the application instance was stopped, health checks failed across both web-tier Availability Zones.
+Application traffic reaches the database through the application-tier security group on PostgreSQL port `5432`.
 
-This demonstrated an important architecture lesson:
-
-> Multi-AZ redundancy in one tier does not eliminate a single point of failure in a downstream tier.
-
-The app tier is therefore the highest-priority availability improvement for the next architecture iteration.
-
-Current:
+The DB subnet group spans both private data subnets:
 
 ```text
-Web ASG across 2 AZs
-        ↓
-Single App EC2
-        ↓
-Single-AZ RDS
+Data Subnet 1a - 10.1.20.0/24
+Data Subnet 1b - 10.1.21.0/24
 ```
 
-Future application tier:
+Multi-AZ was evaluated during Phase 1.1.
 
-```text
-Web Tier
-    ↓
-Internal ALB
-    ↓
-App Auto Scaling Group
-    ↓
-App Instances across multiple AZs
-```
+However, the AWS account/free-plan restrictions did not allow the standby instance to be enabled within the current setup.
+
+![RDS free plan limitation](docs/screenshots/phase-1-1/11-rds-free-plan-limitation.png)
+
+The Multi-AZ standby option was therefore unavailable.
+
+![RDS Multi-AZ option unavailable](docs/screenshots/phase-1-1/12-rds-multiaz-option-unavailable.png)
+
+The database remains Single-AZ in this phase.
+
+No successful database failover is claimed because no standby database instance was enabled.
 
 ---
 
-# Engineering Decisions and Tradeoffs
+# S3 and CloudFront
 
-## Manual Build Before Terraform
+The S3 bucket remains private.
 
-The architecture was deliberately built manually before introducing Infrastructure as Code.
-
-This allowed me to understand:
-
-- Subnet placement
-- Route tables
-- Internet Gateway routing
-- NAT Gateway routing
-- Security-group relationships
-- ALB behavior
-- Target health
-- Auto Scaling
-- Private EC2 connectivity
-- RDS networking
-- CloudFront and S3 integration
-- CloudWatch alarms
-- SNS notifications
-
-The next phase will recreate these infrastructure decisions using Terraform.
-
-## Security-Group References Instead of Broad Access
-
-Application ports are not open broadly.
+It stores the question bank and application static assets.
 
 ```text
-Port 5000 → allowed only from icoach-web-sg
-Port 5432 → allowed only from icoach-app-sg
+data/questions.json
+
+static/v2/style.css
+
+static/v2/script.js
 ```
 
-This limits communication to the tier that actually requires access.
+CloudFront accesses the private S3 bucket through Origin Access Control.
 
-## systemd Instead of a Foreground Process
+The application retrieves the question bank through CloudFront rather than directly from S3.
 
-Running the Flask application through `systemd` provides:
+Browser CSS and JavaScript are also delivered through CloudFront.
 
-- Startup during boot
-- Independence from SSH
-- Automatic restart if the process exits
-- Consistent service control
+![Private S3 static assets](docs/screenshots/phase-1-1/10-s3-static-assets.png)
 
-## Web Tier Scaled Before App Tier
-
-The web tier uses Auto Scaling across two Availability Zones.
-
-The application tier remains a single instance in this version because the initial goal was to understand the architecture while keeping the learning environment appropriate to the workload and cost.
-
-The later failure test exposed the availability limitation of this design.
-
-
-## Single-AZ RDS — Cost Optimization
-
-I originally planned to use Multi-AZ RDS to add database failover capability.
-
-For this learning environment, the additional cost was not justified, so I deliberately kept PostgreSQL Single-AZ.
-
-The database subnet group still includes subnets in both Availability Zones, which leaves a clear path for a future Multi-AZ deployment.
-
-This was a cost-versus-availability tradeoff rather than an architectural assumption that Single-AZ is sufficient for production.
-
-## CloudFront in Front of Private S3
-
-The application could access S3 directly using IAM and the AWS SDK.
-
-In this version, the question bank is retrieved through CloudFront while the S3 origin remains private through Origin Access Control.
-
-## Monitoring Tested Through Failure
-
-CloudWatch and SNS were tested by deliberately stopping and restoring the application service.
-
-This validated the complete path:
-
-```text
-Failure
-→ Detection
-→ Alarm
-→ Notification
-→ Recovery
-→ Health verification
-→ Recovery notification
-```
+This keeps the S3 bucket private while still allowing required application content to be delivered.
 
 ---
 
-# Known Gaps / Next Iteration
+# Monitoring and Alerting
 
-## 1. App-Tier High Availability — Highest Priority
-
-Current:
+Amazon CloudWatch and Amazon SNS were used to monitor health and report failures.
 
 ```text
-Single private App EC2
+AWS Resource / Metric
+      |
+      v
+CloudWatch Alarm
+      |
+      v
+Amazon SNS
+      |
+      v
+Email Notification
 ```
 
-Future:
+The security-group incident provided a real validation of this monitoring path.
+
+When connectivity failed, CloudWatch detected the unhealthy web targets and SNS delivered ALARM notifications.
+
+After connectivity was restored and health checks recovered, the alarms returned to the OK state.
+
+---
+
+# Resource Tagging
+
+AWS resources were tagged consistently during the manual build.
+
+Examples include:
 
 ```text
-Internal ALB
-+
-App Auto Scaling Group
-+
-App instances across multiple AZs
+Project   = icoach
+ManagedBy = manual
+Tier      = public / private
 ```
 
-## 2. HTTPS
+The goal of tagging was to make it easier to:
 
-Current:
-
-```text
-HTTP :80
-```
-
-Future:
-
-```text
-ACM Certificate
-+
-HTTPS :443 Listener
-+
-HTTP → HTTPS Redirect
-```
-
-## 3. Multi-AZ RDS
-
-Current:
-
-```text
-Single-AZ PostgreSQL
-```
-
-I originally planned to use a Multi-AZ RDS deployment, but the additional cost was not justified for this learning environment.
-
-I therefore kept the database Single-AZ as a deliberate cost-optimization decision. The DB subnet group still spans both Availability Zones, so the architecture is already prepared for a future Multi-AZ deployment.
-
-Future:
-
-```text
-Multi-AZ RDS Deployment
-```
-
-This upgrade would be implemented when the workload and availability requirements justify the additional cost.
-
-## 4. Secrets Management
-
-Before creating a reusable application-tier AMI, application credentials should be moved into AWS Secrets Manager.
-
-Credentials should never be baked into an AMI.
-
-## 5. Static Assets Through CloudFront
-
-CSS and JavaScript files are already stored in S3, but the current templates still reference locally served copies.
-
-A future iteration will serve those static assets through CloudFront.
-
-## 6. Custom Domain
-
-Planned services:
-
-- Amazon Route 53
-- Custom DNS
-- AWS Certificate Manager
-- HTTPS
+- identify resources belonging to the project
+- understand resource purpose
+- separate infrastructure tiers
+- troubleshoot problems
+- review costs
+- prepare for future Terraform management
 
 ---
 
 # Validation
 
-The completed manual deployment was validated end to end:
+Phase 1.1 was validated through:
 
-- Application accessible through the ALB
-- Both web-tier targets healthy
-- Auto Scaling maintaining desired capacity
-- Flask running without an active SSH session
-- Nginx successfully proxying to the application tier
-- Interview questions retrieved through CloudFront
-- Interview sessions successfully written to RDS
-- RDS not directly reachable from the public internet
-- CloudWatch alarms transitioned from `OK` to `ALARM`
-- SNS delivered real failure notifications
-- Intentional application failure was detected
-- Application recovery was confirmed
-- CloudWatch returned from `ALARM` to `OK`
-- SNS delivered recovery notifications
-- Failure testing exposed the single application instance as an availability bottleneck
+- application access through the public ALB during deployment testing
+- healthy web-tier targets
+- healthy application-tier targets
+- application ASG maintaining desired capacity
+- internal ALB routing to both application instances
+- IAM-based Secrets Manager retrieval
+- successful Gemini API request
+- PostgreSQL session persistence
+- question-bank retrieval through CloudFront
+- static asset delivery through CloudFront
+- Nginx routing through the internal application ALB
+- successful web Auto Scaling Group instance refresh
+- legacy standalone application EC2 decommissioning
+- deliberate application-instance termination
+- automatic ASG replacement
+- application target-group recovery
+- CloudWatch detection of the security-group failure
+- SNS ALARM notification
+- recovery validation
+- final application-tier cutover with zero observed downtime
+
+---
+
+# Known Gaps
+
+Phase 1.1 improved the reliability and security of the application tier, but the environment is not presented as a finished production platform.
+
+Remaining gaps include:
+
+- HTTPS is not implemented on the public ALB
+- a custom domain is not implemented
+- RDS remains Single-AZ
+- Terraform has not yet replaced the manual AWS build
+- Docker has not yet been added
+- CI/CD has not yet been added
+- Kubernetes / EKS has not yet been added
+
+A future improvement is to introduce a private DNS alias for the internal application ALB rather than coupling Nginx directly to the AWS-generated ALB hostname.
+
+Nginx DNS-resolution behavior can also be configured more deliberately for hostname-based upstreams.
 
 ---
 
 # Technology Stack
 
-### AWS
+## AWS
 
 - Amazon VPC
 - Amazon EC2
 - Application Load Balancer
 - EC2 Auto Scaling
+- Launch Templates
 - Amazon RDS PostgreSQL
 - Amazon S3
 - Amazon CloudFront
+- AWS Secrets Manager
+- AWS IAM
 - Amazon CloudWatch
 - Amazon SNS
 - Internet Gateway
 - NAT Gateway
-- IAM
-- AWS Secrets Manager *(planned)*
 
-### Application / Operating System
+## Application / OS
 
 - Python
 - Flask
+- Gemini API
+- boto3
 - PostgreSQL
 - Nginx
 - systemd
@@ -716,44 +851,40 @@ The completed manual deployment was validated end to end:
 
 ---
 
-# Project Roadmap
-
-| Phase | Focus | Status |
-|---|---|---|
-| Phase 0 | Local Application Prototype | ✅ Complete |
-| Phase 1 | Manual AWS Deployment | ✅ Complete |
-| Phase 2 | Terraform / Infrastructure as Code | ⏭️ Next |
-| Phase 3 | Docker | Planned |
-| Phase 4 | CI/CD | Planned |
-| Phase 5 | Kubernetes / Amazon EKS | Planned |
-
-The same application will continue through each phase so the repository demonstrates progression from application development to cloud infrastructure, automation, containers, deployment pipelines, and orchestration.
-
----
-
-# Supporting Technical Evidence
-
-Additional AWS console screenshots from the manual deployment are stored here:
-
-[View supporting AWS infrastructure evidence](docs/screenshots/evidence/)
-
-These include supporting configuration evidence for the ALB, Auto Scaling activity, launch templates, security groups, RDS, S3, CloudFront, and related infrastructure.
-
----
-
 # Project Status
 
-**Phase 1 — Manual AWS Deployment: Complete ✅**
+## Phase 1.1 - Complete
 
-The environment has been deployed and validated end to end.
+The Phase 1.1 infrastructure was manually built, migrated, tested, troubleshot, hardened, and validated.
 
-**Live App:**  
-http://icoach-alb-1227578735.us-east-1.elb.amazonaws.com/
+The screenshots in this repository document the AWS environment and validation performed during this phase.
 
-### Next Milestone
+The application is not currently being presented as an always-on public service.
 
-Rebuild the same AWS infrastructure using **Terraform** and manage the environment as Infrastructure as Code.
+## Next Milestone
+
+Rebuild the validated Phase 1.1 architecture using **Terraform**.
+
+The goal of Phase 2 is not to redesign the architecture.
+
+The goal is to translate the manually built infrastructure into repeatable Infrastructure as Code.
+
+```text
+Manual AWS Build
+      |
+      v
+Terraform
+      |
+      v
+Docker
+      |
+      v
+CI/CD
+      |
+      v
+Kubernetes / EKS
+```
 
 ---
 
-**Built and documented by Kamaldeep Singh — August–September 2026**
+**Built and documented by Kamaldeep Singh - August-September 2026**
