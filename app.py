@@ -2,6 +2,7 @@ import os
 import json
 import random
 import psycopg2
+from psycopg2 import pool
 import requests
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError, EndpointConnectionError
@@ -48,11 +49,31 @@ load_secret_into_env("icoach/db-credentials")
 # We never put the key in this file -- that's the whole point of using env vars.
 # Gemini's free tier needs no credit card on file, so there is no path to a
 # surprise bill here -- worst case, requests get rate-limited, not charged.
-client = genai.Client()
+#
+# Wrapped in try/except: if the secret above failed to load for any reason
+# (missing, wrong permissions, not created yet), this would otherwise crash
+# the whole app on startup instead of just degrading the feedback feature.
+try:
+    client = genai.Client()
+except Exception as exc:
+    print(f"Could not initialize Gemini client: {exc}")
+    client = None
 
-
-def get_db_connection():
-    return psycopg2.connect(
+# ---------------------------------------------------------------------------
+# Database connection pool
+# ---------------------------------------------------------------------------
+# Replaces opening a brand-new Postgres connection on every single request.
+# minconn=1: at least one connection stays open and ready at all times.
+# maxconn=5: caps how many connections *this one process* can hold at once,
+# so a traffic spike can't exhaust RDS's total connection limit by itself.
+#
+# Wrapped in try/except for the same reason as the Gemini client above: a
+# database outage at startup should degrade the /api/feedback route only,
+# not crash the whole app and fail every ALB health check.
+try:
+    db_pool = psycopg2.pool.SimpleConnectionPool(
+        1,
+        5,
         host=os.environ.get("DB_HOST"),
         port=os.environ.get("DB_PORT"),
         dbname=os.environ.get("DB_NAME"),
@@ -60,6 +81,20 @@ def get_db_connection():
         password=os.environ.get("DB_PASSWORD"),
         sslmode="require",
     )
+except Exception as exc:
+    print(f"Could not create database connection pool at startup: {exc}")
+    db_pool = None
+
+
+def get_db_connection():
+    if db_pool is None:
+        raise RuntimeError("Database connection pool is not available")
+    return db_pool.getconn()
+
+
+def release_db_connection(conn):
+    if db_pool is not None and conn is not None:
+        db_pool.putconn(conn)
 
 
 ROLES = {
@@ -107,6 +142,11 @@ def home():
     return render_template("index.html")
 
 
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"}), 200
+
+
 @app.route("/api/roles")
 def get_roles():
     return jsonify(ROLES)
@@ -132,6 +172,9 @@ def get_feedback():
     if not all([role, question, answer]):
         return jsonify({"error": "Missing role, question, or answer"}), 400
 
+    if client is None:
+        return jsonify({"error": "Could not reach the AI service. Please try again."}), 500
+
     role_label = ROLES.get(role, role)
 
     prompt = (
@@ -153,16 +196,21 @@ def get_feedback():
         feedback = response.text
 
         conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO sessions (role, question, answer, feedback) VALUES (%s, %s, %s, %s)",
-            (role, question, answer, feedback),
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO sessions (role, question, answer, feedback) VALUES (%s, %s, %s, %s)",
+                (role, question, answer, feedback),
+            )
+            conn.commit()
+            cur.close()
+        finally:
+            release_db_connection(conn)
     except Exception as exc:
-        return jsonify({"error": f"Could not reach the AI service: {exc}"}), 500
+        # Full detail logged server-side for debugging; client gets a generic
+        # message only, so internal errors are never exposed over the API.
+        print(f"Error in get_feedback: {exc}")
+        return jsonify({"error": "Could not reach the AI service. Please try again."}), 500
 
     return jsonify({"feedback": feedback})
 
