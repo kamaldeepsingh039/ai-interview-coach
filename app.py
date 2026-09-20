@@ -38,7 +38,16 @@ def load_secret_into_env(secret_name):
         print(f"Loaded secret '{secret_name}' from Secrets Manager.")
     except (ClientError, NoCredentialsError, EndpointConnectionError) as exc:
         print(f"Could not load '{secret_name}' from Secrets Manager, falling back to .env: {exc}")
+def load_ssm_param_into_env(param_name, env_var_name):
+    try:
+        client = boto3.client("ssm", region_name=AWS_REGION)
+        response = client.get_parameter(Name=param_name)
+        os.environ[env_var_name] = response["Parameter"]["Value"]
+        print(f"Loaded '{param_name}' from SSM Parameter Store.")
+    except (ClientError, NoCredentialsError, EndpointConnectionError) as exc:
+        print(f"Could not load '{param_name}' from SSM, falling back: {exc}")
 
+load_ssm_param_into_env("/icoach/questions-bank-url", "QUESTIONS_BANK_URL")
 
 # Secret names created in AWS Secrets Manager -- see SECRETS_MANAGER_SETUP.md
 # for the exact key/value pairs each one needs to contain.
@@ -106,7 +115,7 @@ ROLES = {
 
 # Question bank lives in S3, served through CloudFront, instead of being
 # hardcoded here. This fetch runs once, when Flask starts up.
-QUESTIONS_URL = "https://d1927xzamfh4ps.cloudfront.net/data/questions.json"
+QUESTIONS_URL = os.environ.get("QUESTIONS_BANK_URL")
 
 
 def load_question_bank():
