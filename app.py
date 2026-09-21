@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import random
 import psycopg2
@@ -10,6 +11,13 @@ from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 from google import genai
 
+# Force stdout to flush on every line instead of sitting in a buffer --
+# this is exactly what hid our print() logs for hours during tonight's
+# incident. Doing it here bakes the fix into the app itself instead of
+# depending on whoever deploys this remembering to set PYTHONUNBUFFERED=1
+# in a systemd unit, a Dockerfile, or a Kubernetes manifest.
+sys.stdout.reconfigure(line_buffering=True)
+
 load_dotenv()  # reads variables from a local .env file, if one exists
 
 app = Flask(__name__)
@@ -17,14 +25,6 @@ app = Flask(__name__)
 # ---------------------------------------------------------------------------
 # Secrets Manager
 # ---------------------------------------------------------------------------
-# On the app-tier EC2 instance, this pulls the real Gemini API key and DB
-# credentials from Secrets Manager and drops them into the environment,
-# using whatever IAM role is attached to the instance -- no AWS access keys
-# ever live in this file or in .env.
-#
-# On a laptop with no IAM role attached, the AWS call fails fast and this
-# silently falls back to whatever's already in .env, same fallback pattern
-# already used below in load_question_bank() for CloudFront.
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 
@@ -38,6 +38,8 @@ def load_secret_into_env(secret_name):
         print(f"Loaded secret '{secret_name}' from Secrets Manager.")
     except (ClientError, NoCredentialsError, EndpointConnectionError) as exc:
         print(f"Could not load '{secret_name}' from Secrets Manager, falling back to .env: {exc}")
+
+
 def load_ssm_param_into_env(param_name, env_var_name):
     try:
         client = boto3.client("ssm", region_name=AWS_REGION)
@@ -47,21 +49,12 @@ def load_ssm_param_into_env(param_name, env_var_name):
     except (ClientError, NoCredentialsError, EndpointConnectionError) as exc:
         print(f"Could not load '{param_name}' from SSM, falling back: {exc}")
 
+
 load_ssm_param_into_env("/icoach/questions-bank-url", "QUESTIONS_BANK_URL")
 
-# Secret names created in AWS Secrets Manager -- see SECRETS_MANAGER_SETUP.md
-# for the exact key/value pairs each one needs to contain.
 load_secret_into_env("icoach/gemini-api-key")
 load_secret_into_env("icoach/db-credentials")
 
-# The Gemini client reads the GEMINI_API_KEY environment variable automatically.
-# We never put the key in this file -- that's the whole point of using env vars.
-# Gemini's free tier needs no credit card on file, so there is no path to a
-# surprise bill here -- worst case, requests get rate-limited, not charged.
-#
-# Wrapped in try/except: if the secret above failed to load for any reason
-# (missing, wrong permissions, not created yet), this would otherwise crash
-# the whole app on startup instead of just degrading the feedback feature.
 try:
     client = genai.Client()
 except Exception as exc:
@@ -71,16 +64,11 @@ except Exception as exc:
 # ---------------------------------------------------------------------------
 # Database connection pool
 # ---------------------------------------------------------------------------
-# Replaces opening a brand-new Postgres connection on every single request.
-# minconn=1: at least one connection stays open and ready at all times.
-# maxconn=5: caps how many connections *this one process* can hold at once,
-# so a traffic spike can't exhaust RDS's total connection limit by itself.
-#
-# Wrapped in try/except for the same reason as the Gemini client above: a
-# database outage at startup should degrade the /api/feedback route only,
-# not crash the whole app and fail every ALB health check.
+# ThreadedConnectionPool instead of SimpleConnectionPool: behaves
+# identically under today's sync Gunicorn workers, but won't race if a
+# future deploy switches to threaded/async workers.
 try:
-    db_pool = psycopg2.pool.SimpleConnectionPool(
+    db_pool = psycopg2.pool.ThreadedConnectionPool(
         1,
         5,
         host=os.environ.get("DB_HOST"),
@@ -101,9 +89,62 @@ def get_db_connection():
     return db_pool.getconn()
 
 
-def release_db_connection(conn):
+def release_db_connection(conn, close=False):
     if db_pool is not None and conn is not None:
-        db_pool.putconn(conn)
+        db_pool.putconn(conn, close=close)
+
+
+def ensure_sessions_table():
+    if db_pool is None:
+        return
+    try:
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id SERIAL PRIMARY KEY,
+                    role TEXT NOT NULL,
+                    question TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    feedback TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                );
+            """)
+            conn.commit()
+            cur.close()
+        finally:
+            release_db_connection(conn)
+    except Exception as exc:
+        print(f"Could not ensure 'sessions' table exists: {exc}")
+
+
+ensure_sessions_table()
+
+
+def save_session(role, question, answer, feedback):
+    conn = get_db_connection()
+    try:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO sessions (role, question, answer, feedback) VALUES (%s, %s, %s, %s)",
+                (role, question, answer, feedback),
+            )
+            conn.commit()
+            cur.close()
+        except psycopg2.OperationalError:
+            release_db_connection(conn, close=True)
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO sessions (role, question, answer, feedback) VALUES (%s, %s, %s, %s)",
+                (role, question, answer, feedback),
+            )
+            conn.commit()
+            cur.close()
+    finally:
+        release_db_connection(conn)
 
 
 ROLES = {
@@ -113,8 +154,6 @@ ROLES = {
     "product-manager": "Product Manager",
 }
 
-# Question bank lives in S3, served through CloudFront, instead of being
-# hardcoded here. This fetch runs once, when Flask starts up.
 QUESTIONS_URL = os.environ.get("QUESTIONS_BANK_URL")
 
 
@@ -125,8 +164,6 @@ def load_question_bank():
         return response.json()
     except Exception as exc:
         print(f"Could not load question bank from CloudFront: {exc}")
-        # Small emergency fallback so the app still runs if CloudFront is
-        # ever unreachable, instead of crashing on startup.
         return {
             "cloud-engineer": [
                 "Walk me through how you would design a highly available web app on AWS."
@@ -153,7 +190,18 @@ def home():
 
 @app.route("/health")
 def health():
+    # Liveness: is the process alive. Stays shallow on purpose -- this
+    # should never fail just because the DB or Gemini had a blip.
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/ready")
+def ready():
+    # Readiness: can this pod actually serve a real request right now.
+    # For Kubernetes -- not used yet on plain ALB, but ready for EKS.
+    if db_pool is None or client is None:
+        return jsonify({"status": "not ready"}), 503
+    return jsonify({"status": "ready"}), 200
 
 
 @app.route("/api/roles")
@@ -197,27 +245,12 @@ def get_feedback():
 
     try:
         response = client.models.generate_content(
-            # Free-tier model with a generous daily quota -- good for a learning project.
-            # "gemini-3.5-flash" gives deeper feedback but only ~50 free requests/day.
             model="gemini-3.5-flash",
             contents=prompt,
         )
         feedback = response.text
-
-        conn = get_db_connection()
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO sessions (role, question, answer, feedback) VALUES (%s, %s, %s, %s)",
-                (role, question, answer, feedback),
-            )
-            conn.commit()
-            cur.close()
-        finally:
-            release_db_connection(conn)
+        save_session(role, question, answer, feedback)
     except Exception as exc:
-        # Full detail logged server-side for debugging; client gets a generic
-        # message only, so internal errors are never exposed over the API.
         print(f"Error in get_feedback: {exc}")
         return jsonify({"error": "Could not reach the AI service. Please try again."}), 500
 
@@ -226,6 +259,6 @@ def get_feedback():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    host = os.environ.get("HOST", "127.0.0.1")
-    debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    host = os.environ.get("HOST", "0.0.0.0")
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    app.run(host=host, port=port, debug=debug)
