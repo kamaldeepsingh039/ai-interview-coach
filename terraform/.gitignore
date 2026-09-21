@@ -1,0 +1,11 @@
+# Local state - contains real secret values once you apply
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Real variable values
+*.tfvars
+*.tfvars.json
+
+# Keep committed example/template files
+!*.tfvars.example

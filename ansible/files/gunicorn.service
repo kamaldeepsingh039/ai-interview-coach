@@ -1,0 +1,13 @@
+[Unit]
+Description=Gunicorn instance serving AI Interview Coach
+After=network.target
+
+[Service]
+User=icoach
+Group=icoach
+WorkingDirectory=/opt/icoach-app
+ExecStart=/opt/icoach-app/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 --access-logfile /var/log/icoach-app/access.log --error-logfile /var/log/icoach-app/error.log app:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

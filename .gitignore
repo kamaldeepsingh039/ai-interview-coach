@@ -1,7 +1,19 @@
 .env
+
 __pycache__/
 *.pyc
+
 .venv/
 venv/
+
 .DS_Store
-.env
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# Keys / certificates
+*.pem
+*.key
